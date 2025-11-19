@@ -1,8 +1,10 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import { LRUCache } from 'lru-cache';
 import type {
     BeadFilterQuery,
     BeadQuery,
     BeadResponse,
+    Manufacturer,
     SerologicalQuery,
     SerologicalResponse,
     SerotypeFilterQuery,
@@ -13,17 +15,29 @@ import type {
 } from './types.js';
 
 const DEFAULT_VERSION = 'v1';
+const DEFAULT_CACHE_MAX_ENTRIES = 1000;
+const DEFAULT_CACHE_TTL = 1000 * 60 * 60; // 1 hour
+const DEFAULT_SEROLOGICAL_TTL = 1000 * 60 * 15; // 15 minutes
+
+export interface HatxServiceCacheOptions {
+    max?: number;
+    ttl?: number;
+    serologicalTTL?: number;
+}
 
 export interface HatxServiceOptions {
     baseURL: string;
     version?: string;
     axiosConfig?: AxiosRequestConfig;
     httpClient?: AxiosInstance;
+    cache?: boolean | HatxServiceCacheOptions;
 }
 
 export class HatxService {
     private readonly client: AxiosInstance;
     private readonly basePath: string;
+    private readonly cache: LRUCache<string, Promise<unknown>> | null;
+    private readonly serologicalCache: LRUCache<string, Promise<unknown>> | null;
 
     constructor(options: HatxServiceOptions) {
         if (!options.baseURL) {
@@ -38,67 +52,115 @@ export class HatxService {
                 baseURL: this.basePath,
                 ...options.axiosConfig,
             });
+
+        const cacheOptions = resolveCacheOptions(options.cache);
+        if (cacheOptions) {
+            this.cache = new LRUCache<string, Promise<unknown>>({
+                max: cacheOptions.max,
+                ttl: cacheOptions.ttl,
+            });
+            this.serologicalCache = new LRUCache<string, Promise<unknown>>({
+                max: cacheOptions.max,
+                ttl: cacheOptions.serologicalTTL,
+            });
+        } else {
+            this.cache = null;
+            this.serologicalCache = null;
+        }
     }
 
     async getSystemHealth(): Promise<SystemHealthResponse> {
-        return this.get<SystemHealthResponse>('/system/health');
+        return this.cacheRequest<SystemHealthResponse>('system:health', () => this.get<SystemHealthResponse>('/system/health'), this.cache);
     }
 
     async getSystemInfo(): Promise<SystemInfoResponse> {
-        return this.get<SystemInfoResponse>('/system/info');
+        return this.cacheRequest<SystemInfoResponse>('system:info', () => this.get<SystemInfoResponse>('/system/info'), this.cache);
     }
 
     async getSystemChangelog(): Promise<string> {
-        return this.get<string>('/system/changelog', { responseType: 'text' });
+        return this.cacheRequest<string>('system:changelog', () => this.get<string>('/system/changelog', { responseType: 'text' }), this.cache);
     }
 
     async getBeadByAllele(allele: string): Promise<BeadResponse[]> {
         this.assertRequiredString(allele, 'allele');
-        return this.get<BeadResponse[]>('/bead', { params: { allele } });
+        return this.cacheRequest<BeadResponse[]>(`bead:get:${allele}`, () => this.get<BeadResponse[]>('/bead', { params: { allele } }), this.cache);
     }
 
     async queryBeads(payload: BeadQuery): Promise<BeadResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
-        return this.post<BeadResponse[]>('/bead', payload);
+        return this.cacheRequest<BeadResponse[]>(
+            `bead:query:${stableSerialize(payload)}`,
+            () => this.post<BeadResponse[]>('/bead', payload),
+            this.cache,
+        );
     }
 
     async filterBeads(payload: BeadFilterQuery): Promise<BeadResponse[]> {
-        return this.post<BeadResponse[]>('/bead/filter', toBeadFilterPayload(payload));
+        const body = toBeadFilterPayload(payload);
+        return this.cacheRequest<BeadResponse[]>(
+            `bead:filter:${stableSerialize(body)}`,
+            () => this.post<BeadResponse[]>('/bead/filter', body),
+            this.cache,
+        );
     }
 
     async getSerologicalByAllele(allele: string): Promise<SerologicalResponse[]> {
         this.assertRequiredString(allele, 'allele');
-        return this.get<SerologicalResponse[]>('/serological', { params: { allele } });
+        return this.cacheRequest<SerologicalResponse[]>(
+            `serological:get:${allele}`,
+            () => this.get<SerologicalResponse[]>('/serological', { params: { allele } }),
+            this.serologicalCache ?? this.cache,
+        );
     }
 
     async querySerological(payload: SerologicalQuery): Promise<SerologicalResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
-        return this.post<SerologicalResponse[]>('/serological', payload);
+        return this.cacheRequest<SerologicalResponse[]>(
+            `serological:query:${stableSerialize(payload)}`,
+            () => this.post<SerologicalResponse[]>('/serological', payload),
+            this.serologicalCache ?? this.cache,
+        );
     }
 
     async getSerotypeByAllele(allele: string, version?: number): Promise<SerotypeResponse[]> {
         this.assertRequiredString(allele, 'allele');
-        const data = await this.get<SerotypeResponseApi[]>('/serotype', {
-            params: {
-                allele,
-                ...(version !== undefined ? { version } : undefined),
+        return this.cacheRequest<SerotypeResponse[]>(
+            `serotype:get:${allele}:${version ?? 'latest'}`,
+            async () => {
+                const data = await this.get<SerotypeResponseApi[]>('/serotype', {
+                    params: {
+                        allele,
+                        ...(version !== undefined ? { version } : undefined),
+                    },
+                });
+                return mapSerotypeResponses(data);
             },
-        });
-        return mapSerotypeResponses(data);
+            this.cache,
+        );
     }
 
     async querySerotype(payload: SerotypeQuery): Promise<SerotypeResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
-        const data = await this.post<SerotypeResponseApi[]>('/serotype', payload);
-        return mapSerotypeResponses(data);
+        return this.cacheRequest<SerotypeResponse[]>(
+            `serotype:query:${stableSerialize(payload)}`,
+            async () => {
+                const data = await this.post<SerotypeResponseApi[]>('/serotype', payload);
+                return mapSerotypeResponses(data);
+            },
+            this.cache,
+        );
     }
 
     async filterSerotype(payload: SerotypeFilterQuery): Promise<SerotypeResponse[]> {
-        const data = await this.post<SerotypeResponseApi[]>(
-            '/serotype/filter',
-            toSerotypeFilterPayload(payload),
+        const body = toSerotypeFilterPayload(payload);
+        return this.cacheRequest<SerotypeResponse[]>(
+            `serotype:filter:${stableSerialize(body)}`,
+            async () => {
+                const data = await this.post<SerotypeResponseApi[]>('/serotype/filter', body);
+                return mapSerotypeResponses(data);
+            },
+            this.cache,
         );
-        return mapSerotypeResponses(data);
     }
 
     private async get<T>(path: string, config?: AxiosRequestConfig): Promise<T> {
@@ -115,6 +177,24 @@ export class HatxService {
         return `${this.basePath}${path}`;
     }
 
+    private cacheRequest<T>(key: string, factory: () => Promise<T>, cache: LRUCache<string, Promise<unknown>> | null): Promise<T> {
+        if (!cache) {
+            return factory();
+        }
+
+        const cached = cache.get(key) as Promise<T> | undefined;
+        if (cached) {
+            return cached;
+        }
+
+        const pending = factory().catch((error) => {
+            cache.delete(key);
+            throw error;
+        });
+        cache.set(key, pending as Promise<unknown>);
+        return pending;
+    }
+
     private assertRequiredString(value: string | undefined, field: string): void {
         if (!value || !value.trim()) {
             throw new Error(`Expected a non-empty value for ${field}.`);
@@ -126,6 +206,12 @@ export class HatxService {
             throw new Error(`Expected ${field} to be a non-empty array.`);
         }
     }
+}
+
+interface ResolvedCacheOptions {
+    max: number;
+    ttl: number;
+    serologicalTTL: number;
 }
 
 interface SerotypeResponseApi {
@@ -147,7 +233,7 @@ interface SerotypeFilterQueryApi {
     serotype?: string | null;
     serotype_from_allele?: string | null;
     comment?: string | null;
-    manufacturer?: string | null;
+    manufacturer?: Manufacturer | null;
     n_field?: number | null;
     version?: number | null;
 }
@@ -158,7 +244,7 @@ interface BeadFilterQueryApi {
     serotype?: string | null;
     serotype_from_allele?: string | null;
     comment?: string | null;
-    manufacturer?: string | null;
+    manufacturer?: Manufacturer | null;
     version?: number | null;
 }
 
@@ -214,4 +300,49 @@ function trimTrailingSlash(input: string): string {
 
 function trimSlashes(input: string): string {
     return input.replace(/^\/+|\/+$/g, '');
+}
+
+function resolveCacheOptions(cache?: boolean | HatxServiceCacheOptions): ResolvedCacheOptions | null {
+    if (cache === false) {
+        return null;
+    }
+
+    if (cache === true || cache === undefined) {
+        return {
+            max: DEFAULT_CACHE_MAX_ENTRIES,
+            ttl: DEFAULT_CACHE_TTL,
+            serologicalTTL: DEFAULT_SEROLOGICAL_TTL,
+        };
+    }
+
+    return {
+        max: cache.max ?? DEFAULT_CACHE_MAX_ENTRIES,
+        ttl: cache.ttl ?? DEFAULT_CACHE_TTL,
+        serologicalTTL: cache.serologicalTTL ?? cache.ttl ?? DEFAULT_SEROLOGICAL_TTL,
+    };
+}
+
+function stableSerialize(payload: unknown): string {
+    const serialized = JSON.stringify(sortValue(payload));
+    return serialized ?? 'undefined';
+}
+
+function sortValue(value: unknown): unknown {
+    if (value === null || typeof value !== 'object') {
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((item) => sortValue(item));
+    }
+
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+        const nested = (value as Record<string, unknown>)[key];
+        if (nested === undefined) {
+            continue;
+        }
+        sorted[key] = sortValue(nested);
+    }
+    return sorted;
 }

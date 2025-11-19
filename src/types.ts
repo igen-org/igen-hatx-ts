@@ -6,10 +6,13 @@ export interface SystemInfoResponse {
     version?: string | null;
 }
 
+export type Manufacturer = 'ONE_LAMBDA' | 'IMMUCOR';
+export type Kit = 'STANDARD' | 'EXPLEX';
+
 export interface BeadResponse {
     allele: string;
-    manufacturer: string;
-    kit: string;
+    manufacturer: Manufacturer;
+    kit: Kit;
 }
 
 export interface BeadQuery {
@@ -22,7 +25,7 @@ export interface BeadFilterQuery {
     serotype?: string | null;
     serotypeFromAllele?: string | null;
     comment?: string | null;
-    manufacturer?: string | null;
+    manufacturer?: Manufacturer | null;
     version?: number | null;
 }
 
@@ -60,7 +63,7 @@ export interface SerotypeFilterQuery {
     serotype?: string | null;
     serotypeFromAllele?: string | null;
     comment?: string | null;
-    manufacturer?: string | null;
+    manufacturer?: Manufacturer | null;
     nField?: number | null;
     version?: number | null;
 }
