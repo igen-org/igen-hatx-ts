@@ -20,7 +20,7 @@ export interface BeadFilterQuery {
     allele?: string | null;
     antigen?: string | null;
     serotype?: string | null;
-    serotype_from_allele?: string | null;
+    serotypeFromAllele?: string | null;
     comment?: string | null;
     manufacturer?: string | null;
     version?: number | null;
@@ -40,10 +40,10 @@ export interface SerotypeResponse {
     allele: string;
     comment: string;
     serotype: string;
-    inputted_antigen: string;
+    inputtedAntigen: string;
     broad: string;
-    ciwd_3_0: string;
-    cwd_2_0: string;
+    ciwd30: string;
+    cwd20: string;
     eurcwd: string;
     bw: string;
     version: number;
@@ -58,9 +58,9 @@ export interface SerotypeFilterQuery {
     allele?: string | null;
     antigen?: string | null;
     serotype?: string | null;
-    serotype_from_allele?: string | null;
+    serotypeFromAllele?: string | null;
     comment?: string | null;
     manufacturer?: string | null;
-    n_field?: number | null;
+    nField?: number | null;
     version?: number | null;
 }

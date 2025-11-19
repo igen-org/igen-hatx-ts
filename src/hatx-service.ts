@@ -63,7 +63,7 @@ export class HatxService {
     }
 
     async filterBeads(payload: BeadFilterQuery): Promise<BeadResponse[]> {
-        return this.post<BeadResponse[]>('/bead/filter', payload);
+        return this.post<BeadResponse[]>('/bead/filter', toBeadFilterPayload(payload));
     }
 
     async getSerologicalByAllele(allele: string): Promise<SerologicalResponse[]> {
@@ -78,21 +78,27 @@ export class HatxService {
 
     async getSerotypeByAllele(allele: string, version?: number): Promise<SerotypeResponse[]> {
         this.assertRequiredString(allele, 'allele');
-        return this.get<SerotypeResponse[]>('/serotype', {
+        const data = await this.get<SerotypeResponseApi[]>('/serotype', {
             params: {
                 allele,
                 ...(version !== undefined ? { version } : undefined),
             },
         });
+        return mapSerotypeResponses(data);
     }
 
     async querySerotype(payload: SerotypeQuery): Promise<SerotypeResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
-        return this.post<SerotypeResponse[]>('/serotype', payload);
+        const data = await this.post<SerotypeResponseApi[]>('/serotype', payload);
+        return mapSerotypeResponses(data);
     }
 
     async filterSerotype(payload: SerotypeFilterQuery): Promise<SerotypeResponse[]> {
-        return this.post<SerotypeResponse[]>('/serotype/filter', payload);
+        const data = await this.post<SerotypeResponseApi[]>(
+            '/serotype/filter',
+            toSerotypeFilterPayload(payload),
+        );
+        return mapSerotypeResponses(data);
     }
 
     private async get<T>(path: string, config?: AxiosRequestConfig): Promise<T> {
@@ -119,6 +125,86 @@ export class HatxService {
         if (!Array.isArray(value) || value.length === 0) {
             throw new Error(`Expected ${field} to be a non-empty array.`);
         }
+    }
+}
+
+interface SerotypeResponseApi {
+    allele: string;
+    comment: string;
+    serotype: string;
+    inputted_antigen: string;
+    broad: string;
+    ciwd_3_0: string;
+    cwd_2_0: string;
+    eurcwd: string;
+    bw: string;
+    version: number;
+}
+
+interface SerotypeFilterQueryApi {
+    allele?: string | null;
+    antigen?: string | null;
+    serotype?: string | null;
+    serotype_from_allele?: string | null;
+    comment?: string | null;
+    manufacturer?: string | null;
+    n_field?: number | null;
+    version?: number | null;
+}
+
+interface BeadFilterQueryApi {
+    allele?: string | null;
+    antigen?: string | null;
+    serotype?: string | null;
+    serotype_from_allele?: string | null;
+    comment?: string | null;
+    manufacturer?: string | null;
+    version?: number | null;
+}
+
+function mapSerotypeResponses(payload: SerotypeResponseApi[]): SerotypeResponse[] {
+    return payload.map((item) => ({
+        allele: item.allele,
+        comment: item.comment,
+        serotype: item.serotype,
+        inputtedAntigen: item.inputted_antigen,
+        broad: item.broad,
+        ciwd30: item.ciwd_3_0,
+        cwd20: item.cwd_2_0,
+        eurcwd: item.eurcwd,
+        bw: item.bw,
+        version: item.version,
+    }));
+}
+
+function toSerotypeFilterPayload(payload: SerotypeFilterQuery): SerotypeFilterQueryApi {
+    const body: SerotypeFilterQueryApi = {};
+    setDefined(body, 'allele', payload.allele);
+    setDefined(body, 'antigen', payload.antigen);
+    setDefined(body, 'serotype', payload.serotype);
+    setDefined(body, 'serotype_from_allele', payload.serotypeFromAllele);
+    setDefined(body, 'comment', payload.comment);
+    setDefined(body, 'manufacturer', payload.manufacturer);
+    setDefined(body, 'n_field', payload.nField);
+    setDefined(body, 'version', payload.version);
+    return body;
+}
+
+function toBeadFilterPayload(payload: BeadFilterQuery): BeadFilterQueryApi {
+    const body: BeadFilterQueryApi = {};
+    setDefined(body, 'allele', payload.allele);
+    setDefined(body, 'antigen', payload.antigen);
+    setDefined(body, 'serotype', payload.serotype);
+    setDefined(body, 'serotype_from_allele', payload.serotypeFromAllele);
+    setDefined(body, 'comment', payload.comment);
+    setDefined(body, 'manufacturer', payload.manufacturer);
+    setDefined(body, 'version', payload.version);
+    return body;
+}
+
+function setDefined<T extends object>(target: T, key: string, value: unknown): void {
+    if (value !== undefined) {
+        (target as Record<string, unknown>)[key] = value;
     }
 }
 
