@@ -4,8 +4,6 @@ TypeScript wrapper for the Hatx REST API (`/v1`).
 
 ### Installation
 
-From a private GitHub repo:
-
 ```bash
 pnpm add git+ssh://git@github.com:igen-info/igen-hatx-ts.git
 ```
