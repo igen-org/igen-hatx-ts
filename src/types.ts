@@ -19,14 +19,31 @@ export interface BeadQuery {
     alleles: string[];
 }
 
-export interface BeadFilterQuery {
+export interface BeadFilterCriteria {
     allele?: string | null;
+    alleles?: string[] | null;
     antigen?: string | null;
     serotype?: string | null;
     serotypeFromAllele?: string | null;
     comment?: string | null;
     manufacturer?: Manufacturer | null;
     version?: number | null;
+    nField?: number | null;
+}
+
+export interface BeadConditionalWhen {
+    allele?: string | null;
+    serotype?: string | null;
+    comment?: string | null;
+}
+
+export interface BeadConditional {
+    when: BeadConditionalWhen;
+    filter: BeadFilterCriteria;
+}
+
+export interface BeadFilterQuery extends BeadFilterCriteria {
+    conditional?: BeadConditional[] | null;
 }
 
 export interface SerologicalResponse {

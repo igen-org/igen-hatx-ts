@@ -1,6 +1,9 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { LRUCache } from 'lru-cache';
 import type {
+    BeadConditional,
+    BeadConditionalWhen,
+    BeadFilterCriteria,
     BeadFilterQuery,
     BeadQuery,
     BeadResponse,
@@ -238,14 +241,31 @@ interface SerotypeFilterQueryApi {
     version?: number | null;
 }
 
-interface BeadFilterQueryApi {
+interface BeadFilterCriteriaApi {
     allele?: string | null;
+    alleles?: string[] | null;
     antigen?: string | null;
     serotype?: string | null;
     serotype_from_allele?: string | null;
     comment?: string | null;
     manufacturer?: Manufacturer | null;
     version?: number | null;
+    n_field?: number | null;
+}
+
+interface BeadConditionalWhenApi {
+    allele?: string | null;
+    serotype?: string | null;
+    comment?: string | null;
+}
+
+interface BeadConditionalApi {
+    when: BeadConditionalWhenApi;
+    filter: BeadFilterCriteriaApi;
+}
+
+interface BeadFilterQueryApi extends BeadFilterCriteriaApi {
+    conditional?: BeadConditionalApi[] | null;
 }
 
 function mapSerotypeResponses(payload: SerotypeResponseApi[]): SerotypeResponse[] {
@@ -277,14 +297,39 @@ function toSerotypeFilterPayload(payload: SerotypeFilterQuery): SerotypeFilterQu
 }
 
 function toBeadFilterPayload(payload: BeadFilterQuery): BeadFilterQueryApi {
-    const body: BeadFilterQueryApi = {};
+    const body: BeadFilterQueryApi = toBeadFilterCriteriaPayload(payload);
+    if (payload.conditional !== undefined) {
+        body.conditional = payload.conditional ? payload.conditional.map(toBeadConditionalPayload) : null;
+    }
+    return body;
+}
+
+function toBeadFilterCriteriaPayload(payload: BeadFilterCriteria): BeadFilterCriteriaApi {
+    const body: BeadFilterCriteriaApi = {};
     setDefined(body, 'allele', payload.allele);
+    setDefined(body, 'alleles', payload.alleles);
     setDefined(body, 'antigen', payload.antigen);
     setDefined(body, 'serotype', payload.serotype);
     setDefined(body, 'serotype_from_allele', payload.serotypeFromAllele);
     setDefined(body, 'comment', payload.comment);
     setDefined(body, 'manufacturer', payload.manufacturer);
     setDefined(body, 'version', payload.version);
+    setDefined(body, 'n_field', payload.nField);
+    return body;
+}
+
+function toBeadConditionalPayload(condition: BeadConditional): BeadConditionalApi {
+    return {
+        when: toBeadConditionalWhenPayload(condition.when),
+        filter: toBeadFilterCriteriaPayload(condition.filter),
+    };
+}
+
+function toBeadConditionalWhenPayload(when: BeadConditionalWhen): BeadConditionalWhenApi {
+    const body: BeadConditionalWhenApi = {};
+    setDefined(body, 'allele', when.allele);
+    setDefined(body, 'serotype', when.serotype);
+    setDefined(body, 'comment', when.comment);
     return body;
 }
 
