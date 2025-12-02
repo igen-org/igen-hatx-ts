@@ -33,6 +33,38 @@ const cachedHatx = new HatxService({
 
 See `src/hatx-service.ts` for the full list of available methods.
 
+### API snippets
+
+```ts
+// System checks
+await hatx.getSystemHealth(); // { status: 'UP' }
+await hatx.getSystemInfo();
+await hatx.getSystemChangelog(); // CHANGELOG.md contents
+
+// Beads
+await hatx.getBeadByAllele('A*01:01');
+await hatx.queryBeads({ alleles: ['A*01:01', 'A*02:01'] });
+await hatx.filterBeads({
+    manufacturer: 'ONE_LAMBDA',
+    serotype: 'A1',
+    conditional: [
+        {
+            when: { allele: 'A*01:01' },
+            filter: { nField: 3, version: 2 },
+        },
+    ],
+});
+
+// Serological
+await hatx.getSerologicalByAllele('A*01:01');
+await hatx.querySerological({ alleles: ['A*01:01'] });
+
+// Serotype / HATS (optionally pass version)
+await hatx.getSerotypeByAllele('A*01:01', 3);
+await hatx.querySerotype({ alleles: ['A*01:01'], version: 3 });
+await hatx.filterSerotype({ serotype: 'A1', version: 3 });
+```
+
 ### Caching
 
 The service caches responses in-memory using an LRU strategy. By default:
