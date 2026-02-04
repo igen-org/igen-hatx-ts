@@ -1,6 +1,9 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { LRUCache } from 'lru-cache';
 import type {
+    ArdReduceOptions,
+    ArdReduceQuery,
+    ArdReduceResponse,
     BeadConditional,
     BeadConditionalWhen,
     BeadFilterCriteria,
@@ -8,6 +11,7 @@ import type {
     BeadQuery,
     BeadResponse,
     Manufacturer,
+    RequestOptions,
     SerologicalQuery,
     SerologicalResponse,
     SerotypeFilterQuery,
@@ -25,11 +29,11 @@ const DEFAULT_SEROLOGICAL_TTL = 1000 * 60 * 15; // 15 minutes
 export interface HatxServiceCacheOptions {
     max?: number;
     ttl?: number;
-    serologicalTTL?: number;
+    serologicalTtl?: number;
 }
 
 export interface HatxServiceOptions {
-    baseURL: string;
+    baseUrl: string;
     version?: string;
     axiosConfig?: AxiosRequestConfig;
     httpClient?: AxiosInstance;
@@ -43,18 +47,18 @@ export class HatxService {
     private readonly serologicalCache: LRUCache<string, Promise<unknown>> | null;
 
     constructor(options: HatxServiceOptions) {
-        if (!options.baseURL) {
-            throw new Error('HatxService requires a baseURL.');
+        if (!options.baseUrl) {
+            throw new Error('HatxService requires a baseUrl.');
         }
 
         const version = options.version ?? DEFAULT_VERSION;
-        this.basePath = `${trimTrailingSlash(options.baseURL)}/${trimSlashes(version)}`;
-        this.client =
-            options.httpClient ??
-            axios.create({
-                baseURL: this.basePath,
-                ...options.axiosConfig,
-            });
+        this.basePath = `${trimTrailingSlash(options.baseUrl)}/${trimSlashes(version)}`;
+
+        const defaultClient = axios.create({
+            baseURL: this.basePath,
+            ...options.axiosConfig,
+        });
+        this.client = options.httpClient ?? defaultClient;
 
         const cacheOptions = resolveCacheOptions(options.cache);
         if (cacheOptions) {
@@ -64,7 +68,7 @@ export class HatxService {
             });
             this.serologicalCache = new LRUCache<string, Promise<unknown>>({
                 max: cacheOptions.max,
-                ttl: cacheOptions.serologicalTTL,
+                ttl: cacheOptions.serologicalTtl,
             });
         } else {
             this.cache = null;
@@ -84,82 +88,125 @@ export class HatxService {
         return this.cacheRequest<string>('system:changelog', () => this.get<string>('/system/changelog', { responseType: 'text' }), this.cache);
     }
 
-    async getBeadByAllele(allele: string): Promise<BeadResponse[]> {
+    async getBeadByAllele(allele: string, options: RequestOptions = {}): Promise<BeadResponse[]> {
         this.assertRequiredString(allele, 'allele');
-        return this.cacheRequest<BeadResponse[]>(`bead:get:${allele}`, () => this.get<BeadResponse[]>('/bead', { params: { allele } }), this.cache);
+        const config = applyRefreshOptions(options, { params: { allele } });
+        return this.cacheRequest<BeadResponse[]>(`bead:get:${allele}`, () => this.get<BeadResponse[]>('/bead', config), this.cache);
     }
 
-    async queryBeads(payload: BeadQuery): Promise<BeadResponse[]> {
+    async queryBeads(payload: BeadQuery, options: RequestOptions = {}): Promise<BeadResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
+        const config = applyRefreshOptions(options);
         return this.cacheRequest<BeadResponse[]>(
             `bead:query:${stableSerialize(payload)}`,
-            () => this.post<BeadResponse[]>('/bead', payload),
+            () => this.post<BeadResponse[]>('/bead', payload, config),
             this.cache,
         );
     }
 
-    async filterBeads(payload: BeadFilterQuery): Promise<BeadResponse[]> {
+    async filterBeads(payload: BeadFilterQuery, options: RequestOptions = {}): Promise<BeadResponse[]> {
         const body = toBeadFilterPayload(payload);
+        const config = applyRefreshOptions(options);
         return this.cacheRequest<BeadResponse[]>(
             `bead:filter:${stableSerialize(body)}`,
-            () => this.post<BeadResponse[]>('/bead/filter', body),
+            () => this.post<BeadResponse[]>('/bead/filter', body, config),
             this.cache,
         );
     }
 
-    async getSerologicalByAllele(allele: string): Promise<SerologicalResponse[]> {
+    async getSerologicalByAllele(allele: string, options: RequestOptions = {}): Promise<SerologicalResponse[]> {
         this.assertRequiredString(allele, 'allele');
+        const config = applyRefreshOptions(options, { params: { allele } });
         return this.cacheRequest<SerologicalResponse[]>(
             `serological:get:${allele}`,
-            () => this.get<SerologicalResponse[]>('/serological', { params: { allele } }),
+            () => this.get<SerologicalResponse[]>('/serological', config),
             this.serologicalCache ?? this.cache,
         );
     }
 
-    async querySerological(payload: SerologicalQuery): Promise<SerologicalResponse[]> {
+    async querySerological(payload: SerologicalQuery, options: RequestOptions = {}): Promise<SerologicalResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
+        const config = applyRefreshOptions(options);
         return this.cacheRequest<SerologicalResponse[]>(
             `serological:query:${stableSerialize(payload)}`,
-            () => this.post<SerologicalResponse[]>('/serological', payload),
+            () => this.post<SerologicalResponse[]>('/serological', payload, config),
             this.serologicalCache ?? this.cache,
         );
     }
 
-    async getSerotypeByAllele(allele: string, version?: number): Promise<SerotypeResponse[]> {
+    async getArdReducedByAllele(allele: string, options: ArdReduceOptions = {}): Promise<ArdReduceResponse> {
+        this.assertRequiredString(allele, 'allele');
+        const params: Record<string, unknown> = { allele };
+        setDefined(params, 'group', options.group);
+        setDefined(params, 'refresh', options.refresh);
+
+        const headers: Record<string, string> = {};
+        if (options.refreshData !== undefined && options.refreshData !== null) {
+            headers['Refresh-Data'] = String(options.refreshData);
+        }
+
+        const config: AxiosRequestConfig = {
+            params,
+            ...(Object.keys(headers).length ? { headers } : undefined),
+        };
+        const request = () => this.get<ArdReduceResponse>('/ard/reduce', config);
+        if (options.refresh === true || options.refreshData === true) {
+            return request();
+        }
+        return this.cacheRequest<ArdReduceResponse>(`ard:reduce:get:${allele}:${stableSerialize({ group: options.group })}`, request, this.cache);
+    }
+
+    async reduceArdAlleles(payload: ArdReduceQuery): Promise<ArdReduceResponse[]> {
+        this.assertArray(payload.alleles, 'alleles');
+        const body: ArdReduceQuery = {
+            alleles: payload.alleles,
+        };
+        setDefined(body, 'group', payload.group);
+        return this.cacheRequest<ArdReduceResponse[]>(
+            `ard:reduce:query:${stableSerialize(body)}`,
+            () => this.post<ArdReduceResponse[]>('/ard/reduce', body),
+            this.cache,
+        );
+    }
+
+    async getSerotypeByAllele(allele: string, version?: number, options: RequestOptions = {}): Promise<SerotypeResponse[]> {
         this.assertRequiredString(allele, 'allele');
         return this.cacheRequest<SerotypeResponse[]>(
             `serotype:get:${allele}:${version ?? 'latest'}`,
             async () => {
-                const data = await this.get<SerotypeResponseApi[]>('/serotype', {
+                const config = applyRefreshOptions(options, {
                     params: {
                         allele,
                         ...(version !== undefined ? { version } : undefined),
                     },
                 });
+                const data = await this.get<SerotypeResponseApi[]>('/serotype', config);
                 return mapSerotypeResponses(data);
             },
             this.cache,
         );
     }
 
-    async querySerotype(payload: SerotypeQuery): Promise<SerotypeResponse[]> {
+    async querySerotype(payload: SerotypeQuery, options: RequestOptions = {}): Promise<SerotypeResponse[]> {
         this.assertArray(payload.alleles, 'alleles');
         return this.cacheRequest<SerotypeResponse[]>(
             `serotype:query:${stableSerialize(payload)}`,
             async () => {
-                const data = await this.post<SerotypeResponseApi[]>('/serotype', payload);
+                const config = applyRefreshOptions(options);
+                const data = await this.post<SerotypeResponseApi[]>('/serotype', payload, config);
                 return mapSerotypeResponses(data);
             },
             this.cache,
         );
     }
 
-    async filterSerotype(payload: SerotypeFilterQuery): Promise<SerotypeResponse[]> {
+    async filterSerotype(payload: SerotypeFilterQuery, options: RequestOptions = {}): Promise<SerotypeResponse[]> {
         const body = toSerotypeFilterPayload(payload);
         return this.cacheRequest<SerotypeResponse[]>(
             `serotype:filter:${stableSerialize(body)}`,
             async () => {
-                const data = await this.post<SerotypeResponseApi[]>('/serotype/filter', body);
+                const config = applyRefreshOptions(options);
+                const data = await this.post<SerotypeResponseApi[]>('/serotype/filter', body, config);
                 return mapSerotypeResponses(data);
             },
             this.cache,
@@ -214,7 +261,7 @@ export class HatxService {
 interface ResolvedCacheOptions {
     max: number;
     ttl: number;
-    serologicalTTL: number;
+    serologicalTtl: number;
 }
 
 interface SerotypeResponseApi {
@@ -328,6 +375,7 @@ function toBeadConditionalPayload(condition: BeadConditional): BeadConditionalAp
 function toBeadConditionalWhenPayload(when: BeadConditionalWhen): BeadConditionalWhenApi {
     const body: BeadConditionalWhenApi = {};
     setDefined(body, 'allele', when.allele);
+    setDefined(body, 'locus', when.locus);
     setDefined(body, 'serotype', when.serotype);
     setDefined(body, 'comment', when.comment);
     return body;
@@ -356,20 +404,42 @@ function resolveCacheOptions(cache?: boolean | HatxServiceCacheOptions): Resolve
         return {
             max: DEFAULT_CACHE_MAX_ENTRIES,
             ttl: DEFAULT_CACHE_TTL,
-            serologicalTTL: DEFAULT_SEROLOGICAL_TTL,
+            serologicalTtl: DEFAULT_SEROLOGICAL_TTL,
         };
     }
 
     return {
         max: cache.max ?? DEFAULT_CACHE_MAX_ENTRIES,
         ttl: cache.ttl ?? DEFAULT_CACHE_TTL,
-        serologicalTTL: cache.serologicalTTL ?? cache.ttl ?? DEFAULT_SEROLOGICAL_TTL,
+        serologicalTtl: cache.serologicalTtl ?? cache.ttl ?? DEFAULT_SEROLOGICAL_TTL,
     };
 }
 
 function stableSerialize(payload: unknown): string {
     const serialized = JSON.stringify(sortValue(payload));
     return serialized ?? 'undefined';
+}
+
+function applyRefreshOptions(options?: RequestOptions, config: AxiosRequestConfig = {}): AxiosRequestConfig {
+    if (!options) {
+        return config;
+    }
+
+    const params: Record<string, unknown> = { ...(config.params as Record<string, unknown> | undefined) };
+    const headers: Record<string, string> = { ...(config.headers as Record<string, string> | undefined) };
+
+    if (options.refresh !== undefined && options.refresh !== null) {
+        params.refresh = options.refresh;
+    }
+    if (options.refreshData !== undefined && options.refreshData !== null) {
+        headers['Refresh-Data'] = String(options.refreshData);
+    }
+
+    return {
+        ...config,
+        ...(Object.keys(params).length ? { params } : undefined),
+        ...(Object.keys(headers).length ? { headers } : undefined),
+    };
 }
 
 function sortValue(value: unknown): unknown {

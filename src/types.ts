@@ -6,6 +6,11 @@ export interface SystemInfoResponse {
     version?: string | null;
 }
 
+export interface RequestOptions {
+    refresh?: boolean | null;
+    refreshData?: boolean | null;
+}
+
 export type Manufacturer = 'ONE_LAMBDA' | 'IMMUCOR';
 export type Kit = 'STANDARD' | 'EXPLEX';
 
@@ -33,6 +38,7 @@ export interface BeadFilterCriteria {
 
 export interface BeadConditionalWhen {
     allele?: string | null;
+    locus?: string | null;
     serotype?: string | null;
     comment?: string | null;
 }
@@ -48,12 +54,31 @@ export interface BeadFilterQuery extends BeadFilterCriteria {
 
 export interface SerologicalResponse {
     allele: string;
-    abhi: string;
-    imgt: string;
+    abhi?: string | null;
+    imgt?: string | null;
 }
 
 export interface SerologicalQuery {
     alleles: string[];
+}
+
+export type ArdGroup = 'p_group' | 'g_group' | 'common_group';
+
+export interface ArdReduceResponse {
+    allele: string;
+    group: ArdGroup;
+    value: string;
+}
+
+export interface ArdReduceQuery {
+    alleles: string[];
+    group?: ArdGroup | null;
+}
+
+export interface ArdReduceOptions {
+    group?: ArdGroup | null;
+    refresh?: boolean | null;
+    refreshData?: boolean | null;
 }
 
 export interface SerotypeResponse {
