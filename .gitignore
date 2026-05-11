@@ -95,6 +95,9 @@ out
 dist
 .output
 
+# Published package output is committed so consumers can install without a build.
+!dist/
+
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and not Next.js
